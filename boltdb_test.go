@@ -8,7 +8,7 @@ import (
 
 	"github.com/kvtools/valkeyrie"
 	"github.com/kvtools/valkeyrie/store"
-	"github.com/kvtools/valkeyrie/testutils"
+	"github.com/kvtools/valkeyrie/testsuite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ func makeBoltDBClient(t *testing.T) store.Store {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	config := &store.Config{Bucket: "boltDBTest"}
+	config := &Config{Bucket: "boltDBTest"}
 
 	kv, err := New(ctx, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
 	require.NoErrorf(t, err, "cannot create store")
@@ -30,18 +30,16 @@ func makeBoltDBClient(t *testing.T) store.Store {
 }
 
 func TestRegister(t *testing.T) {
-	Register()
-
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	config := &store.Config{Bucket: "boltDBTest"}
+	config := &Config{Bucket: "boltDBTest"}
 
-	kv, err := valkeyrie.NewStore(ctx, store.BOLTDB, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
+	kv, err := valkeyrie.NewStore(ctx, StoreName, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
 	require.NoError(t, err)
 	require.NotNil(t, kv)
 
-	assert.IsTypef(t, kv, new(BoltDB), "Error registering and initializing boltDB")
+	assert.IsTypef(t, kv, new(Store), "Error registering and initializing boltDB")
 
 	_ = os.Remove("/tmp/not_exist_dir/__boltdbtest")
 }
@@ -49,7 +47,7 @@ func TestRegister(t *testing.T) {
 // TestMultiplePersistConnection tests the second connection to a
 // BoltDB fails when one is already open with PersistConnection flag.
 func TestMultiplePersistConnection(t *testing.T) {
-	config := &store.Config{
+	config := &Config{
 		Bucket:            "boltDBTest",
 		ConnectionTimeout: 1 * time.Second,
 		PersistConnection: true,
@@ -58,14 +56,14 @@ func TestMultiplePersistConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	kv, err := valkeyrie.NewStore(ctx, store.BOLTDB, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
+	kv, err := valkeyrie.NewStore(ctx, StoreName, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
 	require.NoError(t, err)
 	assert.NotNil(t, kv)
 
-	assert.IsTypef(t, kv, new(BoltDB), "Error registering and initializing boltDB")
+	assert.IsTypef(t, kv, new(Store), "Error registering and initializing boltDB")
 
 	// Must fail if multiple boltdb requests are made with a valid timeout.
-	_, err = valkeyrie.NewStore(ctx, store.BOLTDB, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
+	_, err = valkeyrie.NewStore(ctx, StoreName, []string{"/tmp/not_exist_dir/__boltdbtest"}, config)
 	assert.Error(t, err)
 
 	_ = os.Remove("/tmp/not_exist_dir/__boltdbtest")
@@ -74,7 +72,7 @@ func TestMultiplePersistConnection(t *testing.T) {
 // TestConcurrentConnection tests simultaneous get/put using
 // two handles.
 func TestConcurrentConnection(t *testing.T) {
-	config := &store.Config{
+	config := &Config{
 		Bucket:            "boltDBTest",
 		ConnectionTimeout: 1 * time.Second,
 	}
@@ -86,11 +84,11 @@ func TestConcurrentConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	kv1, err := valkeyrie.NewStore(ctx, store.BOLTDB, []string{"/tmp/__boltdbtest"}, config)
+	kv1, err := valkeyrie.NewStore(ctx, StoreName, []string{"/tmp/__boltdbtest"}, config)
 	require.NoError(t, err)
 	assert.NotNil(t, kv1)
 
-	kv2, err := valkeyrie.NewStore(ctx, store.BOLTDB, []string{"/tmp/__boltdbtest"}, config)
+	kv2, err := valkeyrie.NewStore(ctx, StoreName, []string{"/tmp/__boltdbtest"}, config)
 	require.NoError(t, err)
 	assert.NotNil(t, kv2)
 
@@ -121,8 +119,8 @@ func TestConcurrentConnection(t *testing.T) {
 	_, _, err = kv2.AtomicPut(ctx, key2, []byte("TestnewVal2"), pair2, nil)
 	require.NoError(t, err)
 
-	testutils.RunTestCommon(t, kv1)
-	testutils.RunTestCommon(t, kv2)
+	testsuite.RunTestCommon(t, kv1)
+	testsuite.RunTestCommon(t, kv2)
 
 	_ = kv1.Close()
 	_ = kv2.Close()
@@ -131,8 +129,8 @@ func TestConcurrentConnection(t *testing.T) {
 func TestBoltDBStore(t *testing.T) {
 	kv := makeBoltDBClient(t)
 
-	testutils.RunTestCommon(t, kv)
-	testutils.RunTestAtomic(t, kv)
+	testsuite.RunTestCommon(t, kv)
+	testsuite.RunTestAtomic(t, kv)
 
 	_ = os.Remove("/tmp/not_exist_dir/__boltdbtest")
 }

@@ -25,37 +25,54 @@ var (
 	ErrBoltBucketOptionMissing = errors.New("boltBucket config option missing")
 )
 
-const (
-	filePerm os.FileMode = 0o644
-)
+// StoreName the name of the store.
+const StoreName = "boltdb"
+
+const filePerm os.FileMode = 0o644
 
 const (
 	metadataLen      = 8
 	transientTimeout = time.Duration(10) * time.Second
 )
 
-// Register registers boltdb to valkeyrie.
-func Register() {
-	valkeyrie.AddStore(store.BOLTDB, New)
+// registers boltdb to Valkeyrie.
+func init() {
+	valkeyrie.Register(StoreName, newStore)
 }
 
-// BoltDB type implements the Store interface.
-type BoltDB struct {
+// Config the BoltDB configuration.
+type Config struct {
+	Bucket            string
+	PersistConnection bool
+	ConnectionTimeout time.Duration
+}
+
+func newStore(ctx context.Context, endpoints []string, options valkeyrie.Config) (store.Store, error) {
+	cfg, ok := options.(*Config)
+	if !ok && cfg != nil {
+		return nil, &store.InvalidConfigurationError{Store: StoreName, Config: options}
+	}
+
+	return New(ctx, endpoints, cfg)
+}
+
+// Store implements the store.Store interface.
+type Store struct {
 	client     *bbolt.DB
 	boltBucket []byte
 	dbIndex    uint64
 	path       string
 	timeout    time.Duration
-	// By default, valkeyrie opens and closes the bolt DB connection for every get/put operation.
-	// This allows multiple apps to use a Bolt DB at the same time.
+	// By default, valkeyrie opens and closes the BoltDB connection for every get/put operation.
+	// This allows multiple apps to use a BoltDB at the same time.
 	// PersistConnection flag provides an option to override ths behavior.
 	// ie: open the connection in New and use it till Close is called.
 	PersistConnection bool
 	mu                sync.Mutex
 }
 
-// New opens a new BoltDB connection to the specified path and bucket.
-func New(_ context.Context, endpoints []string, options *store.Config) (store.Store, error) {
+// New creates a new BoltDB client.
+func New(_ context.Context, endpoints []string, options *Config) (*Store, error) {
 	if len(endpoints) > 1 {
 		return nil, ErrMultipleEndpointsUnsupported
 	}
@@ -64,8 +81,9 @@ func New(_ context.Context, endpoints []string, options *store.Config) (store.St
 		return nil, ErrBoltBucketOptionMissing
 	}
 
-	dir, _ := filepath.Split(endpoints[0])
-	err := os.MkdirAll(dir, 0o750)
+	dbPath := endpoints[0]
+
+	err := os.MkdirAll(filepath.Dir(dbPath), 0o750)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +91,7 @@ func New(_ context.Context, endpoints []string, options *store.Config) (store.St
 	var db *bbolt.DB
 	if options.PersistConnection {
 		boltOptions := &bbolt.Options{Timeout: options.ConnectionTimeout}
-		db, err = bbolt.Open(endpoints[0], filePerm, boltOptions)
+		db, err = bbolt.Open(dbPath, filePerm, boltOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -84,9 +102,9 @@ func New(_ context.Context, endpoints []string, options *store.Config) (store.St
 		timeout = options.ConnectionTimeout
 	}
 
-	b := &BoltDB{
+	b := &Store{
 		client:            db,
-		path:              endpoints[0],
+		path:              dbPath,
 		boltBucket:        []byte(options.Bucket),
 		timeout:           timeout,
 		PersistConnection: options.PersistConnection,
@@ -95,37 +113,11 @@ func New(_ context.Context, endpoints []string, options *store.Config) (store.St
 	return b, nil
 }
 
-func (b *BoltDB) reset() {
-	b.path = ""
-	b.boltBucket = []byte{}
-}
-
-func (b *BoltDB) getDBHandle() (*bbolt.DB, error) {
-	if b.PersistConnection {
-		return b.client, nil
-	}
-
-	boltOptions := &bbolt.Options{Timeout: b.timeout}
-	db, err := bbolt.Open(b.path, filePerm, boltOptions)
-	if err != nil {
-		return nil, err
-	}
-
-	b.client = db
-	return b.client, nil
-}
-
-func (b *BoltDB) releaseDBHandle() {
-	if !b.PersistConnection {
-		_ = b.client.Close()
-	}
-}
-
 // Get the value at "key".
 // BoltDB doesn't provide an inbuilt last modified index with every kv pair.
 // It's implemented by an atomic counter maintained by the valkeyrie
 // and appended to the value passed by the client.
-func (b *BoltDB) Get(_ context.Context, key string, _ *store.ReadOptions) (*store.KVPair, error) {
+func (b *Store) Get(_ context.Context, key string, _ *store.ReadOptions) (*store.KVPair, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -165,7 +157,7 @@ func (b *BoltDB) Get(_ context.Context, key string, _ *store.ReadOptions) (*stor
 
 // Put the key, value pair.
 // Index number metadata is prepended to the value.
-func (b *BoltDB) Put(_ context.Context, key string, value []byte, _ *store.WriteOptions) error {
+func (b *Store) Put(_ context.Context, key string, value []byte, _ *store.WriteOptions) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -196,7 +188,7 @@ func (b *BoltDB) Put(_ context.Context, key string, value []byte, _ *store.Write
 }
 
 // Delete the value for the given key.
-func (b *BoltDB) Delete(_ context.Context, key string) error {
+func (b *Store) Delete(_ context.Context, key string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -217,7 +209,7 @@ func (b *BoltDB) Delete(_ context.Context, key string) error {
 }
 
 // Exists checks if the key exists inside the store.
-func (b *BoltDB) Exists(_ context.Context, key string, _ *store.ReadOptions) (bool, error) {
+func (b *Store) Exists(_ context.Context, key string, _ *store.ReadOptions) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -247,11 +239,11 @@ func (b *BoltDB) Exists(_ context.Context, key string, _ *store.ReadOptions) (bo
 }
 
 // List returns the range of keys starting with the passed in prefix.
-func (b *BoltDB) List(_ context.Context, keyPrefix string, _ *store.ReadOptions) ([]*store.KVPair, error) {
+func (b *Store) List(_ context.Context, keyPrefix string, _ *store.ReadOptions) ([]*store.KVPair, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	kv := []*store.KVPair{}
+	var kv []*store.KVPair
 
 	db, err := b.getDBHandle()
 	if err != nil {
@@ -299,7 +291,7 @@ func (b *BoltDB) List(_ context.Context, keyPrefix string, _ *store.ReadOptions)
 
 // AtomicDelete deletes a value at "key" if the key has not been modified in the meantime,
 // throws an error if this is the case.
-func (b *BoltDB) AtomicDelete(_ context.Context, key string, previous *store.KVPair) (bool, error) {
+func (b *Store) AtomicDelete(_ context.Context, key string, previous *store.KVPair) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -341,7 +333,7 @@ func (b *BoltDB) AtomicDelete(_ context.Context, key string, previous *store.KVP
 // AtomicPut puts a value at "key"
 // if the key has not been modified since the last Put,
 // throws an error if this is the case.
-func (b *BoltDB) AtomicPut(_ context.Context, key string, value []byte, previous *store.KVPair, opts *store.WriteOptions) (bool, *store.KVPair, error) {
+func (b *Store) AtomicPut(_ context.Context, key string, value []byte, previous *store.KVPair, _ *store.WriteOptions) (bool, *store.KVPair, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -355,7 +347,7 @@ func (b *BoltDB) AtomicPut(_ context.Context, key string, value []byte, previous
 
 	var dbIndex uint64
 
-	err = db.Update(func(tx *bbolt.Tx) error {
+	errUpdate := db.Update(func(tx *bbolt.Tx) error {
 		var err error
 		bucket := tx.Bucket(b.boltBucket)
 		if bucket == nil {
@@ -390,8 +382,8 @@ func (b *BoltDB) AtomicPut(_ context.Context, key string, value []byte, previous
 
 		return bucket.Put([]byte(key), dbval)
 	})
-	if err != nil {
-		return false, nil, err
+	if errUpdate != nil {
+		return false, nil, errUpdate
 	}
 
 	updated := &store.KVPair{
@@ -404,7 +396,7 @@ func (b *BoltDB) AtomicPut(_ context.Context, key string, value []byte, previous
 }
 
 // Close the db connection to the BoltDB.
-func (b *BoltDB) Close() error {
+func (b *Store) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -417,7 +409,7 @@ func (b *BoltDB) Close() error {
 }
 
 // DeleteTree deletes a range of keys with a given prefix.
-func (b *BoltDB) DeleteTree(_ context.Context, keyPrefix string) error {
+func (b *Store) DeleteTree(_ context.Context, keyPrefix string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -444,16 +436,42 @@ func (b *BoltDB) DeleteTree(_ context.Context, keyPrefix string) error {
 }
 
 // NewLock has to implemented at the library level since it's not supported by BoltDB.
-func (b *BoltDB) NewLock(_ context.Context, _ string, _ *store.LockOptions) (store.Locker, error) {
+func (b *Store) NewLock(_ context.Context, _ string, _ *store.LockOptions) (store.Locker, error) {
 	return nil, store.ErrCallNotSupported
 }
 
 // Watch has to implemented at the library level since it's not supported by BoltDB.
-func (b *BoltDB) Watch(_ context.Context, _ string, _ *store.ReadOptions) (<-chan *store.KVPair, error) {
+func (b *Store) Watch(_ context.Context, _ string, _ *store.ReadOptions) (<-chan *store.KVPair, error) {
 	return nil, store.ErrCallNotSupported
 }
 
 // WatchTree has to implemented at the library level since it's not supported by BoltDB.
-func (b *BoltDB) WatchTree(_ context.Context, _ string, _ *store.ReadOptions) (<-chan []*store.KVPair, error) {
+func (b *Store) WatchTree(_ context.Context, _ string, _ *store.ReadOptions) (<-chan []*store.KVPair, error) {
 	return nil, store.ErrCallNotSupported
+}
+
+func (b *Store) reset() {
+	b.path = ""
+	b.boltBucket = []byte{}
+}
+
+func (b *Store) getDBHandle() (*bbolt.DB, error) {
+	if b.PersistConnection {
+		return b.client, nil
+	}
+
+	boltOptions := &bbolt.Options{Timeout: b.timeout}
+	db, err := bbolt.Open(b.path, filePerm, boltOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	b.client = db
+	return b.client, nil
+}
+
+func (b *Store) releaseDBHandle() {
+	if !b.PersistConnection {
+		_ = b.client.Close()
+	}
 }
