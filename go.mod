@@ -3,7 +3,7 @@ module github.com/kvtools/boltdb
 go 1.18
 
 require (
-	github.com/kvtools/valkeyrie v0.4.2-0.20220908144207-547378b52b33
+	github.com/kvtools/valkeyrie v1.0.0
 	github.com/stretchr/testify v1.8.0
 	go.etcd.io/bbolt v1.3.6
 )
