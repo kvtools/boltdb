@@ -38,20 +38,18 @@ import (
 )
 
 func main() {
-	addr := "localhost:8500"
+	ctx := context.Background()
 
-	// Initialize a new store.
 	config := &boltdb.Config{
 		Bucket: "example",
 	}
 
-	kv, err := valkeyrie.NewStore(boltdb.StoreName, []string{addr}, config)
+	kv, err := valkeyrie.NewStore(ctx, boltdb.StoreName, []string{"/tmp/mydatabase"}, config)
 	if err != nil {
 		log.Fatal("Cannot create store")
 	}
 
 	key := "foo"
-	ctx := context.Background()
 
 	err = kv.Put(ctx, key, []byte("bar"), nil)
 	if err != nil {
@@ -63,11 +61,11 @@ func main() {
 		log.Fatalf("Error trying accessing value at key: %v", key)
 	}
 
+	log.Printf("value: %s", string(pair.Value))
+
 	err = kv.Delete(ctx, key)
 	if err != nil {
 		log.Fatalf("Error trying to delete key %v", key)
 	}
-
-	log.Printf("value: %s", string(pair.Value))
 }
 ```
