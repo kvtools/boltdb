@@ -1,10 +1,10 @@
 module github.com/kvtools/boltdb
 
-go 1.18
+go 1.19
 
 require (
 	github.com/kvtools/valkeyrie v1.0.0
-	github.com/stretchr/testify v1.8.0
+	github.com/stretchr/testify v1.8.4
 	go.etcd.io/bbolt v1.3.6
 )
 
